@@ -2,32 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ChangeEvent } from 'react';
+import { sendPromptToApi, type ProcessedResponse } from '@/lib/ai';
 
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  type?: 'helpful' | 'unhelpful' | 'error';
+  isFiltered?: boolean;
+  originalContent?: string;
 };
-
-async function sendPrompt(prompt: string): Promise<string> {
-  const res = await fetch('/api/ai', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ promt: prompt })
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || 'Request failed');
-  }
-
-  const data = await res.json();
-  // The backend returns arbitrary JSON. Try common fields else stringify.
-  const candidate = data?.message ?? data?.response ?? data?.text ?? data?.answer;
-  return typeof candidate === 'string' ? candidate : JSON.stringify(data);
-}
 
 export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,18 +36,22 @@ export default function HomePage() {
     setInput('');
     setIsLoading(true);
     try {
-      const reply = await sendPrompt(prompt);
+      const processedResponse: ProcessedResponse = await sendPromptToApi(prompt);
       const aiMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: reply
+        content: processedResponse.content,
+        type: processedResponse.type,
+        isFiltered: processedResponse.isFiltered,
+        originalContent: processedResponse.originalContent
       };
       setMessages((prev: ChatMessage[]) => [...prev, aiMsg]);
     } catch (err: any) {
       const aiMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'system',
-        content: `Error: ${err?.message || 'Unknown error'}`
+        content: `Error: ${err?.message || 'Unknown error'}`,
+        type: 'error'
       };
       setMessages((prev: ChatMessage[]) => [...prev, aiMsg]);
     } finally {
@@ -81,8 +69,10 @@ export default function HomePage() {
   return (
     <main className="container py-8">
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">AI Chat</h1>
-        <a className="text-xs text-white/60 underline" href="https://backed-ai.vercel.app/api/ai" target="_blank" rel="noreferrer">API</a>
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">AI Chat</h1>
+          <p className="text-xs text-white/50 mt-1">Enhanced with response filtering for better answers</p>
+        </div>
       </div>
 
       <div className="card p-4">
@@ -95,11 +85,32 @@ export default function HomePage() {
           {messages.map((m: ChatMessage) => (
             <div key={m.id} className="flex gap-3">
               <div className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center text-[10px] uppercase tracking-wider ${
-                m.role === 'user' ? 'bg-primary/30 text-primary' : m.role === 'assistant' ? 'bg-white/10 text-white/80' : 'bg-red-500/20 text-red-300'
+                m.role === 'user' ? 'bg-primary/30 text-primary' : 
+                m.role === 'assistant' ? (
+                  m.type === 'unhelpful' ? 'bg-yellow-500/20 text-yellow-300' :
+                  m.type === 'error' ? 'bg-red-500/20 text-red-300' :
+                  'bg-green-500/20 text-green-300'
+                ) : 'bg-red-500/20 text-red-300'
               }`}>
-                {m.role === 'user' ? 'You' : m.role === 'assistant' ? 'AI' : 'Sys'}
+                {m.role === 'user' ? 'You' : 
+                 m.role === 'assistant' ? (
+                   m.type === 'unhelpful' ? '⚠️' :
+                   m.type === 'error' ? '❌' : '✅'
+                 ) : 'Sys'}
               </div>
-              <div className="whitespace-pre-wrap leading-relaxed text-sm">{m.content}</div>
+              <div className="flex-1">
+                <div className="whitespace-pre-wrap leading-relaxed text-sm">{m.content}</div>
+                {m.isFiltered && m.originalContent && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-white/50 cursor-pointer hover:text-white/70">
+                      Show original response
+                    </summary>
+                    <div className="mt-2 p-3 bg-white/5 rounded border border-white/10 text-xs text-white/70 whitespace-pre-wrap">
+                      {m.originalContent}
+                    </div>
+                  </details>
+                )}
+              </div>
             </div>
           ))}
           <div ref={bottomRef} />
